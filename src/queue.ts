@@ -13,3 +13,8 @@ export const connection = new Redis({
 export const webhookQueue = new Queue("monday-event", {
   connection,
 });
+
+// New GitHub PR queue
+export const githubQueue = new Queue("github-pr-creation", {
+  connection,
+});
