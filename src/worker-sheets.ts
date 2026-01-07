@@ -28,6 +28,50 @@ function normalizeMarketSector(col: any): string {
   return label;
 }
 
+function formatContractsForSheets(contractsText: string): string {
+  if (!contractsText || contractsText.trim() === "") {
+    return "N/A";
+  }
+
+  // First, split by lines to handle line-separated format
+  let lines = contractsText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  // If we only have one line, check if it's comma-separated pairs
+  if (lines.length === 1) {
+    const singleLine = lines[0] as string;
+    const parts = singleLine.split(",").map((part) => part.trim());
+
+    // If we have an even number of parts (pairs), it's likely comma-separated format
+    // Example: "TradingRouter,0x123,Marketplace,0x456" = 4 parts = 2 pairs
+    if (parts.length > 2 && parts.length % 2 === 0) {
+      lines = [];
+      // Group every 2 parts into contract pairs
+      for (let i = 0; i < parts.length; i += 2) {
+        if (i + 1 < parts.length) {
+          lines.push(`${parts[i]}, ${parts[i + 1]}`);
+        }
+      }
+    }
+  }
+
+  const formattedLines: string[] = [];
+
+  for (const line of lines) {
+    // Check if line already starts with "Sei," - if so, keep as is
+    if (line.startsWith("Sei,")) {
+      formattedLines.push(line);
+    } else {
+      // Add "Sei," prefix to the line
+      formattedLines.push(`Sei,${line}`);
+    }
+  }
+
+  return formattedLines.join("\n");
+}
+
 /* ---------------- worker ---------------- */
 
 const worker = new Worker(
@@ -64,7 +108,9 @@ const worker = new Worker(
     const website = extractLink(c.link_mkr62c24);
     const docs = extractLink(c.link_mkr61z2y);
     // const desc = extractText(c.text_mkr6qyhd);
-    const contracts = extractText(c.long_text_mkr6h69e);
+    const contracts = formatContractsForSheets(
+      extractText(c.long_text_mkr6h69e)
+    );
     const email = extractEmail(c.email_mkr6crn7);
 
     /* -------- Google Sheets order -------- */
@@ -74,17 +120,18 @@ const worker = new Worker(
       marketSector, // B Market sector* (dropdown)
       valueOrNA(website), // C Website*
       "N/A", // D Twitter*
-      "N/A", // E Discord*
-      "N/A", // F Github*
-      valueOrNA(docs), // G Docs (URL)
-      valueOrNA(contracts), // H Smart contracts*
-      "N/A", // I Metrics interest
-      "N/A", // J Gov token symbol
-      "N/A", // K Gov token address
-      "N/A", // L Gov token chain
-      "N/A", // M Coingecko ID
-      valueOrNA(email), // N Email*
-      "N/A", // O Telegram
+      "N/A", // E Telegram*
+      "N/A", // F Discord*
+      "N/A", // G Github*
+      valueOrNA(docs), // H Docs (URL)
+      valueOrNA(contracts), // I Smart contracts*
+      "N/A", // J Metrics interest
+      "N/A", // K Gov token symbol
+      "N/A", // L Gov token address
+      "N/A", // M Gov token chain
+      "N/A", // N Coingecko ID
+      valueOrNA(email), // O Email*
+      "N/A", // P Telegram
     ];
 
     console.log("Appending row:", row);

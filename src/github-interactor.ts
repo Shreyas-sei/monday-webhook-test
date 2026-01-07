@@ -6,9 +6,6 @@ const octokit = initializeGitHub();
 /* ---------------- Data Transformation ---------------- */
 
 function transformWebhookToGitHubFormat(event: any): any {
-  // TODO: Implement specific data transformation logic here
-  // This transforms Monday.com webhook data to the desired GitHub file format
-
   const c =
     event.column_values || event.columnValues || event?.pulse?.column_values;
 
@@ -16,28 +13,115 @@ function transformWebhookToGitHubFormat(event: any): any {
     throw new Error("No column values found in event");
   }
 
-  // Example transformation - customize this based on your needs
-  const transformedData = {
-    timestamp: new Date().toISOString(),
-    source: "monday.com",
-    eventType: event.type,
-    data: {
-      projectName: c.text_mkr6cypr?.text || c.text_mkr6cypr?.value || "",
-      marketSector: c.color_mkr65y7p?.label?.text || "",
-      website: c.link_mkr62c24?.url || "",
-      docs: c.link_mkr61z2y?.url || "",
-      contracts:
-        c.long_text_mkr6h69e?.text || c.long_text_mkr6h69e?.value || "",
-      email: c.email_mkr6crn7?.email || "",
-      // Add more fields as needed
-    },
-    metadata: {
-      receivedAt: event.receivedAt || new Date().toISOString(),
-      processedAt: new Date().toISOString(),
+  // Extract data from Monday.com columns
+  const projectName = c.text_mkr6cypr?.text || c.text_mkr6cypr?.value || "";
+  const marketSector = c.color_mkr65y7p?.label?.text || "";
+  const website = c.link_mkr62c24?.url || "";
+  const desc = c.text_mkr6qyhd?.text || c.text_mkr6qyhd?.value || "";
+  const docs = c.link_mkr61z2y?.url || "";
+  const contractsText =
+    c.long_text_mkr6h69e?.text || c.long_text_mkr6h69e?.value || "";
+  const email = c.email_mkr6crn7?.email || "";
+
+  // Transform to awesome-sei format
+  const awesomeData = {
+    name: projectName,
+    description: desc,
+    categories: transformMarketSectorToCategories(marketSector),
+    addresses: parseContractAddresses(contractsText),
+    links: {
+      project: website || undefined,
+      twitter: undefined, // Add Twitter field to Monday.com if needed
+      github: undefined, // Add GitHub field to Monday.com if needed
+      docs: docs || undefined,
+      email: email || undefined,
     },
   };
 
-  return transformedData;
+  // Remove undefined values to keep JSON clean
+  return removeUndefinedValues(awesomeData);
+}
+
+function transformMarketSectorToCategories(marketSector: string): string[] {
+  // Map Monday.com market sectors to awesome-sei categories
+  const sectorMap: Record<string, string[]> = {
+    GameFi: ["Gaming::Games"],
+    Gaming: ["Gaming::Games"],
+    DeFi: ["DeFi::Lending", "DeFi::Trading"],
+    NFT: ["NFT::Marketplaces"],
+    Infrastructure: ["Infrastructure::Tools"],
+    // Add more mappings as needed
+  };
+
+  return sectorMap[marketSector] || ["Other"];
+}
+function parseContractAddresses(contractsText: string): Record<string, string> {
+  if (!contractsText) return {};
+
+  const addresses: Record<string, string> = {};
+
+  // First, split by lines to handle line-separated format
+  let lines = contractsText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  // If we only have one line, check if it's comma-separated pairs
+  if (lines.length === 1) {
+    const singleLine = lines[0] as string;
+    const parts = singleLine.split(",").map((part) => part.trim());
+
+    // If we have an even number of parts (pairs), it's likely comma-separated format
+    // Example: "TradingRouter,0x123,Marketplace,0x456" = 4 parts = 2 pairs
+    if (parts.length > 2 && parts.length % 2 === 0) {
+      lines = [];
+      // Group every 2 parts into contract pairs
+      for (let i = 0; i < parts.length; i += 2) {
+        if (i + 1 < parts.length) {
+          lines.push(`${parts[i]}, ${parts[i + 1]}`);
+        }
+      }
+    }
+  }
+
+  // Now process each line as ContractName, Address
+  for (const line of lines) {
+    // Split by comma and clean up
+    const parts = line
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0);
+
+    // Expected format: ContractName, Address
+    // e.g., "TradingRouter, 0x3894085Ef7Ff0f0aeDf52E2A2704928d1Ec074F1"
+    if (parts.length >= 2) {
+      const [contractName, address] = parts as [string, string];
+      addresses[contractName] = address;
+    }
+  }
+
+  return addresses;
+}
+
+function removeUndefinedValues(obj: any): any {
+  const cleaned: any = {};
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined && value !== null && value !== "") {
+      if (typeof value === "object" && !Array.isArray(value)) {
+        const cleanedNested = removeUndefinedValues(value);
+        if (Object.keys(cleanedNested).length > 0) {
+          cleaned[key] = cleanedNested;
+        }
+      } else if (Array.isArray(value) && value.length > 0) {
+        cleaned[key] = value;
+      } else if (typeof value !== "object") {
+        cleaned[key] = value;
+      }
+    }
+  }
+
+  return cleaned;
 }
 
 /* ---------------- PR Creation Functions ---------------- */
@@ -51,8 +135,8 @@ async function createPRWithChanges(formattedData: any): Promise<string> {
 
     // 1. Get the base branch reference
     const { data: baseRef } = await octokit.rest.git.getRef({
-      owner: owner as string,
-      repo: repo as string,
+      owner: owner!,
+      repo: repo!,
       ref: `heads/${baseBranch}`,
     });
 
@@ -60,8 +144,8 @@ async function createPRWithChanges(formattedData: any): Promise<string> {
 
     // 2. Create new branch from base
     await octokit.rest.git.createRef({
-      owner: owner as string,
-      repo: repo as string,
+      owner: owner!,
+      repo: repo!,
       ref: `refs/heads/${branchName}`,
       sha: baseRef.object.sha,
     });
@@ -72,8 +156,8 @@ async function createPRWithChanges(formattedData: any): Promise<string> {
     let currentFileSha: string | undefined;
     try {
       const { data: currentFile } = await octokit.rest.repos.getContent({
-        owner: owner as string,
-        repo: repo as string,
+        owner: owner!,
+        repo: repo!,
         path: targetFile,
         ref: baseBranch,
       });
@@ -109,8 +193,8 @@ async function createPRWithChanges(formattedData: any): Promise<string> {
 
     // 6. Create Pull Request
     const { data: pr } = await octokit.rest.pulls.create({
-      owner: owner as string,
-      repo: repo as string,
+      owner: owner!,
+      repo: repo!,
       title: `Auto-update: Monday.com webhook data`,
       head: branchName,
       base: baseBranch,
@@ -128,25 +212,21 @@ async function createPRWithChanges(formattedData: any): Promise<string> {
 function generatePRDescription(formattedData: any, targetFile: string): string {
   return `## Auto-generated PR from Monday.com
 
-This PR was automatically created from Monday.com webhook data.
+This PR adds a new project to the awesome-sei repository.
+
+**Project:** ${formattedData.name}
+**Categories:** ${formattedData.categories?.join(", ") || "N/A"}
 
 **Changes:**
-- Updated \`${targetFile}\` with formatted webhook data
+- Updated \`${targetFile}\` with new project data
 - Timestamp: ${new Date().toISOString()}
 
-**Data Summary:**
+**Project Details:**
 \`\`\`json
-${JSON.stringify(formattedData, null, 2).substring(0, 500)}${
-    JSON.stringify(formattedData, null, 2).length > 500 ? "..." : ""
-  }
+${JSON.stringify(formattedData, null, 2)}
 \`\`\`
 
-**Project Details:**
-- **Project Name:** ${formattedData.data?.projectName || "N/A"}
-- **Market Sector:** ${formattedData.data?.marketSector || "N/A"}
-- **Website:** ${formattedData.data?.website || "N/A"}
-
-_This PR was created automatically by the Monday.com webhook handler._`;
+_This PR was created automatically from Monday.com webhook data._`;
 }
 
 export { transformWebhookToGitHubFormat, createPRWithChanges };
