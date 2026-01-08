@@ -6,6 +6,7 @@ const octokit = initializeGitHub();
 /* ---------------- Data Transformation ---------------- */
 
 function transformWebhookToGitHubFormat(event: any): any {
+  console.log("Transforming webhook event to GitHub format:", event);
   const c =
     event.column_values || event.columnValues || event?.pulse?.column_values;
 
@@ -13,28 +14,41 @@ function transformWebhookToGitHubFormat(event: any): any {
     throw new Error("No column values found in event");
   }
 
-  // Extract data from Monday.com columns
+  // Extract data from Monday.com columns (updated field mapping)
   const projectName = c.text_mkr6cypr?.text || c.text_mkr6cypr?.value || "";
   const marketSector = c.color_mkr65y7p?.label?.text || "";
+  const projectDesc = c.text_mkr6qyhd?.text || c.text_mkr6qyhd?.value || "";
   const website = c.link_mkr62c24?.url || "";
-  const desc = c.text_mkr6qyhd?.text || c.text_mkr6qyhd?.value || "";
   const docs = c.link_mkr61z2y?.url || "";
   const contractsText =
     c.long_text_mkr6h69e?.text || c.long_text_mkr6h69e?.value || "";
   const email = c.email_mkr6crn7?.email || "";
+  const github = c.linkpu5n23wn?.url || ""; 
+  const twitter = c.linkf82j245c?.url || "";
+  const telegramCommunity = c.linkwitzcip0?.url || ""; 
+  const discord = c.link6ua963o8?.url || "";
+  const coingeckoId =
+    c.short_textbhlznjhg?.text || c.short_textbhlznjhg?.value || "";
+  const telegramHandle =
+    c.short_textsvrja3l1?.text || c.short_textsvrja3l1?.value || ""; 
 
   // Transform to awesome-sei format
   const awesomeData = {
     name: projectName,
-    description: desc,
+    description:
+      projectDesc || `${projectName} - A project in the ${marketSector} sector`,
     categories: transformMarketSectorToCategories(marketSector),
     addresses: parseContractAddresses(contractsText),
     links: {
       project: website || undefined,
-      twitter: undefined, // Add Twitter field to Monday.com if needed
-      github: undefined, // Add GitHub field to Monday.com if needed
+      twitter: twitter || undefined,
+      github: github || undefined,
       docs: docs || undefined,
+      communityDiscord: discord || undefined,
+      communityTelegram: telegramCommunity || undefined,
       email: email || undefined,
+      coingecko: coingeckoId || undefined,
+      telegram: telegramHandle || undefined,
     },
   };
 

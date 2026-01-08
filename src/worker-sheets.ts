@@ -80,6 +80,7 @@ const worker = new Worker(
     console.log("Processing job:", job.id);
 
     const { event, spreadsheetId } = job.data;
+    console.log("Event data:", event);
 
     if (!event) {
       console.warn("⚠️ Missing event object, skipping job", job.id);
@@ -101,40 +102,61 @@ const worker = new Worker(
 
     console.log("Column values:", c);
 
-    /* -------- extract fields -------- */
+    /* -------- extract ALL fields from new format -------- */
 
-    const projectName = extractText(c.text_mkr6cypr);
-    const marketSector = normalizeMarketSector(c.color_mkr65y7p);
-    const website = extractLink(c.link_mkr62c24);
-    const docs = extractLink(c.link_mkr61z2y);
-    // const desc = extractText(c.text_mkr6qyhd);
+    const projectName = extractText(c.text_mkr6cypr); // Project Name
+    const marketSector = normalizeMarketSector(c.color_mkr65y7p); // GameFi -> Gaming
+    const projectDesc = extractText(c.text_mkr6qyhd); // Project Description
+    const website = extractLink(c.link_mkr62c24); // Website
+    const docs = extractLink(c.link_mkr61z2y); // Docs
     const contracts = formatContractsForSheets(
-      extractText(c.long_text_mkr6h69e)
+      extractText(c.long_text_mkr6h69e) // Smart Contracts
     );
-    const email = extractEmail(c.email_mkr6crn7);
+    const email = extractEmail(c.email_mkr6crn7); // Email
+    const github = extractLink(c.linkpu5n23wn); // GitHub
+    const twitter = extractLink(c.linkf82j245c); // Twitter/X
+    const telegramCommunity = extractLink(c.linkwitzcip0); // Telegram Community
+    const discord = extractLink(c.link6ua963o8); // Discord
+    const coingeckoId = extractText(c.short_textbhlznjhg); // Coingecko ID
+    const telegramHandle = extractText(c.short_textsvrja3l1); // Telegram Handle
 
-    /* -------- Google Sheets order -------- */
+    /* -------- Google Sheets order (updated with all fields) -------- */
 
     const row = [
       valueOrNA(projectName), // A Project name*
       marketSector, // B Market sector* (dropdown)
       valueOrNA(website), // C Website*
-      "N/A", // D Twitter*
-      "N/A", // E Telegram*
-      "N/A", // F Discord*
-      "N/A", // G Github*
+      valueOrNA(twitter), // D Twitter* (now populated!)
+      valueOrNA(telegramCommunity), // E Telegram* (community)
+      valueOrNA(discord), // F Discord* (now populated!)
+      valueOrNA(github), // G Github* (now populated!)
       valueOrNA(docs), // H Docs (URL)
       valueOrNA(contracts), // I Smart contracts*
-      "N/A", // J Metrics interest
-      "N/A", // K Gov token symbol
-      "N/A", // L Gov token address
-      "N/A", // M Gov token chain
-      "N/A", // N Coingecko ID
+      "N/A", // J Metrics interest (still N/A)
+      "N/A", // K Gov token symbol (still N/A)
+      "N/A", // L Gov token address (still N/A)
+      "N/A", // M Gov token chain (still N/A)
+      valueOrNA(coingeckoId), // N Coingecko ID (now populated!)
       valueOrNA(email), // O Email*
-      "N/A", // P Telegram
+      valueOrNA(telegramHandle), // P Telegram (handle)
     ];
 
     console.log("Appending row:", row);
+    console.log("Extracted data:", {
+      projectName,
+      marketSector,
+      projectDesc,
+      website,
+      docs,
+      contracts,
+      email,
+      github,
+      twitter,
+      telegramCommunity,
+      discord,
+      coingeckoId,
+      telegramHandle,
+    });
 
     await appendRow(row, spreadsheetId);
   },
