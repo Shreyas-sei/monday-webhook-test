@@ -3,6 +3,11 @@ import { GITHUB_CONFIG } from "./auth/github.js";
 
 const octokit = initializeGitHub();
 
+function generateTargetFilePath(projectName: string): string {
+  const sanitizedName = sanitizeProjectName(projectName);
+  return `${GITHUB_CONFIG.baseTargetPath}/${sanitizedName}.json`;
+}
+
 /* ---------------- Data Transformation ---------------- */
 
 function transformWebhookToGitHubFormat(event: any): any {
@@ -155,7 +160,7 @@ function parseContractAddresses(contractsText: string): Record<string, string> {
     let address = "";
 
     // Try different separators: colon, comma, equals, space
-    const separators = [":", ",", "=", " "];
+    const separators = [":", ",", "="];
     let parsed = false;
 
     for (const separator of separators) {
@@ -166,59 +171,113 @@ function parseContractAddresses(contractsText: string): Record<string, string> {
           .filter((p) => p);
 
         if (parts.length >= 2) {
-          // Check both orders: name-address and address-name
-          const [first, second] = parts as [string, string];
+          // For comma separator, be more careful about multiple parts
+          if (separator === "," && parts.length > 2) {
+            // Try to find the address part - look for 0x pattern
+            let addressIndex = -1;
+            let nameIndex = -1;
 
-          if (isValidAddress(first) && !isValidAddress(second)) {
-            // address, name format
-            contractName = second;
-            address = first;
-            parsed = true;
-            break;
-          } else if (!isValidAddress(first) && isValidAddress(second)) {
-            // name, address format
-            contractName = first;
-            address = second;
-            parsed = true;
-            break;
+            for (let i = 0; i < parts.length; i++) {
+              const part = parts[i]!;
+              if (
+                part.toLowerCase().startsWith("0x") ||
+                /^[a-fA-F0-9]+$/.test(part)
+              ) {
+                addressIndex = i;
+                // Find the closest non-address part as name
+                if (i > 0 && !parts[i - 1]!.toLowerCase().startsWith("0x")) {
+                  nameIndex = i - 1;
+                } else if (
+                  i < parts.length - 1 &&
+                  !parts[i + 1]!.toLowerCase().startsWith("0x")
+                ) {
+                  nameIndex = i + 1;
+                }
+                break;
+              }
+            }
+
+            if (addressIndex >= 0 && nameIndex >= 0) {
+              contractName = parts[nameIndex]!;
+              address = parts[addressIndex]!;
+              parsed = true;
+              break;
+            }
+          }
+
+          // Standard two-part parsing
+          if (!parsed) {
+            const [first, second] = parts as [string, string];
+
+            // Check if first part looks like an address (starts with 0x or is hex)
+            const firstLooksLikeAddress =
+              first.toLowerCase().startsWith("0x") ||
+              /^[a-fA-F0-9]+$/.test(first);
+            const secondLooksLikeAddress =
+              second.toLowerCase().startsWith("0x") ||
+              /^[a-fA-F0-9]+$/.test(second);
+
+            if (firstLooksLikeAddress && !secondLooksLikeAddress) {
+              // address, name format
+              contractName = second;
+              address = first;
+              parsed = true;
+              break;
+            } else if (!firstLooksLikeAddress && secondLooksLikeAddress) {
+              // name, address format
+              contractName = first;
+              address = second;
+              parsed = true;
+              break;
+            }
           }
         }
       }
     }
 
-    // If no separator worked, try to find address in the line
-    if (!parsed) {
-      const words = line
+    // Try space separator last (more ambiguous)
+    if (!parsed && line.includes(" ")) {
+      const parts = line
         .split(/\s+/)
-        .map((w) => w.trim())
-        .filter((w) => w);
-      const addressWord = words.find((word) => isValidAddress(word));
+        .map((p) => p.trim())
+        .filter((p) => p);
 
-      if (addressWord) {
-        address = addressWord;
-        // Use the remaining words as contract name
-        contractName = words
-          .filter((word) => word !== addressWord)
-          .join(" ")
-          .trim();
-        parsed = true;
+      if (parts.length >= 2) {
+        // Look for address-like patterns
+        const addressPart = parts.find(
+          (part) =>
+            part.toLowerCase().startsWith("0x") || /^[a-fA-F0-9]+$/.test(part),
+        );
+
+        if (addressPart) {
+          address = addressPart;
+          contractName = parts
+            .filter((part) => part !== addressPart)
+            .join(" ")
+            .trim();
+          parsed = true;
+        }
       }
     }
 
     // Final validation and cleaning
-    if (parsed && contractName && address && isValidAddress(address)) {
+    if (parsed && contractName && address) {
       // Clean contract name
       contractName = contractName
         .replace(/^[,:\s=]+|[,:\s=]+$/g, "") // Remove leading/trailing separators
         .replace(/[""'']/g, "") // Remove quotes
         .trim();
 
-      // Ensure address is properly formatted
-      address = address.toLowerCase().startsWith("0x")
-        ? address
-        : `0x${address}`;
+      // Ensure address has 0x prefix if it looks like hex
+      if (
+        !address.toLowerCase().startsWith("0x") &&
+        /^[a-fA-F0-9]+$/.test(address)
+      ) {
+        address = `0x${address}`;
+      }
 
-      if (contractName && isValidAddress(address)) {
+      // Store the result (even if address validation fails, let the caller decide)
+      if (contractName && address) {
         addresses[contractName] = address;
       }
     }
@@ -266,7 +325,8 @@ function sanitizeProjectName(projectName: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "-") // Replace non-alphanumeric with hyphens
     .replace(/-+/g, "-") // Replace consecutive hyphens with single hyphen
-    .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
+    .replace(/^-+|-+$/g, "") // Remove leading/trailing hyphens
+    .substring(0, 50); // Limit length for file system compatibility
 }
 
 /**
@@ -308,7 +368,9 @@ async function generateUniqueBranchName(projectName: string): Promise<string> {
 /* ---------------- PR Creation Functions ---------------- */
 
 async function createPRWithChanges(formattedData: any): Promise<string> {
-  const { owner, repo, targetFile, baseBranch } = GITHUB_CONFIG;
+  const { owner, repo, baseBranch } = GITHUB_CONFIG;
+
+  const targetFile = generateTargetFilePath(formattedData.name);
 
   // Generate branch name based on project name
   const branchName = await generateUniqueBranchName(formattedData.name);

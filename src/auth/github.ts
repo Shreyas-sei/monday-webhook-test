@@ -8,7 +8,7 @@ dotenv.config();
 const GITHUB_CONFIG = {
   owner: process.env.GITHUB_OWNER,
   repo: process.env.GITHUB_REPO,
-  targetFile: process.env.TARGET_FILE_PATH || "data/webhook-data.json",
+  baseTargetPath: process.env.BASE_TARGET_PATH || "data",
   baseBranch: process.env.BASE_BRANCH || "main",
 };
 
