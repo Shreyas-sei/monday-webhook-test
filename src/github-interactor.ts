@@ -23,14 +23,14 @@ function transformWebhookToGitHubFormat(event: any): any {
   const contractsText =
     c.long_text_mkr6h69e?.text || c.long_text_mkr6h69e?.value || "";
   const email = c.email_mkr6crn7?.email || "";
-  const github = c.linkpu5n23wn?.url || ""; 
+  const github = c.linkpu5n23wn?.url || "";
   const twitter = c.linkf82j245c?.url || "";
-  const telegramCommunity = c.linkwitzcip0?.url || ""; 
+  const telegramCommunity = c.linkwitzcip0?.url || "";
   const discord = c.link6ua963o8?.url || "";
   const coingeckoId =
     c.short_textbhlznjhg?.text || c.short_textbhlznjhg?.value || "";
   const telegramHandle =
-    c.short_textsvrja3l1?.text || c.short_textsvrja3l1?.value || ""; 
+    c.short_textsvrja3l1?.text || c.short_textsvrja3l1?.value || "";
 
   // Transform to awesome-sei format
   const awesomeData = {
@@ -69,48 +69,158 @@ function transformMarketSectorToCategories(marketSector: string): string[] {
 
   return sectorMap[marketSector] || ["Other"];
 }
+
 function parseContractAddresses(contractsText: string): Record<string, string> {
   if (!contractsText) return {};
 
   const addresses: Record<string, string> = {};
 
-  // First, split by lines to handle line-separated format
+  // Ethereum address regex (0x followed by 40 hex characters)
+  const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
+
+  // Function to check if a string is a valid Ethereum address
+  const isValidAddress = (address: string): boolean => {
+    return ETH_ADDRESS_REGEX.test(address.trim());
+  };
+
+  // Function to clean and normalize text
+  const cleanText = (text: string): string => {
+    return text.trim().replace(/[""'']/g, '"'); // Normalize quotes
+  };
+
+  // Split by lines first
   let lines = contractsText
-    .split("\n")
-    .map((line) => line.trim())
+    .split(/\r?\n/)
+    .map((line) => cleanText(line))
     .filter((line) => line.length > 0);
 
-  // If we only have one line, check if it's comma-separated pairs
+  // If single line, try to split it into multiple entries
   if (lines.length === 1) {
     const singleLine = lines[0] as string;
-    const parts = singleLine.split(",").map((part) => part.trim());
 
-    // If we have an even number of parts (pairs), it's likely comma-separated format
-    // Example: "TradingRouter,0x123,Marketplace,0x456" = 4 parts = 2 pairs
-    if (parts.length > 2 && parts.length % 2 === 0) {
-      lines = [];
-      // Group every 2 parts into contract pairs
-      for (let i = 0; i < parts.length; i += 2) {
-        if (i + 1 < parts.length) {
-          lines.push(`${parts[i]}, ${parts[i + 1]}`);
+    // Try different delimiters in order of preference
+    const delimiters = [";", "|", "\t"];
+    let bestSplit = [singleLine];
+
+    for (const delimiter of delimiters) {
+      if (singleLine.includes(delimiter)) {
+        const parts = singleLine
+          .split(delimiter)
+          .map((p) => p.trim())
+          .filter((p) => p);
+        if (parts.length > 1) {
+          bestSplit = parts;
+          break;
         }
       }
     }
+
+    // If no other delimiter worked, try comma but be more careful
+    if (bestSplit.length === 1 && singleLine.includes(",")) {
+      const commaParts = singleLine
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p);
+
+      // Check if it looks like comma-separated pairs
+      if (commaParts.length >= 2 && commaParts.length % 2 === 0) {
+        // Verify that every second item looks like an address
+        let isValidPairFormat = true;
+        for (let i = 1; i < commaParts.length; i += 2) {
+          if (!isValidAddress(commaParts[i]!)) {
+            isValidPairFormat = false;
+            break;
+          }
+        }
+
+        if (isValidPairFormat) {
+          bestSplit = [];
+          for (let i = 0; i < commaParts.length; i += 2) {
+            if (i + 1 < commaParts.length) {
+              bestSplit.push(`${commaParts[i]}, ${commaParts[i + 1]}`);
+            }
+          }
+        }
+      }
+    }
+
+    lines = bestSplit;
   }
 
-  // Now process each line as ContractName, Address
+  // Process each line
   for (const line of lines) {
-    // Split by comma and clean up
-    const parts = line
-      .split(",")
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0);
+    if (!line.trim()) continue;
 
-    // Expected format: ContractName, Address
-    // e.g., "TradingRouter, 0x3894085Ef7Ff0f0aeDf52E2A2704928d1Ec074F1"
-    if (parts.length >= 2) {
-      const [contractName, address] = parts as [string, string];
-      addresses[contractName] = address;
+    let contractName = "";
+    let address = "";
+
+    // Try different separators: colon, comma, equals, space
+    const separators = [":", ",", "=", " "];
+    let parsed = false;
+
+    for (const separator of separators) {
+      if (line.includes(separator)) {
+        const parts = line
+          .split(separator)
+          .map((p) => p.trim())
+          .filter((p) => p);
+
+        if (parts.length >= 2) {
+          // Check both orders: name-address and address-name
+          const [first, second] = parts as [string, string];
+
+          if (isValidAddress(first) && !isValidAddress(second)) {
+            // address, name format
+            contractName = second;
+            address = first;
+            parsed = true;
+            break;
+          } else if (!isValidAddress(first) && isValidAddress(second)) {
+            // name, address format
+            contractName = first;
+            address = second;
+            parsed = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // If no separator worked, try to find address in the line
+    if (!parsed) {
+      const words = line
+        .split(/\s+/)
+        .map((w) => w.trim())
+        .filter((w) => w);
+      const addressWord = words.find((word) => isValidAddress(word));
+
+      if (addressWord) {
+        address = addressWord;
+        // Use the remaining words as contract name
+        contractName = words
+          .filter((word) => word !== addressWord)
+          .join(" ")
+          .trim();
+        parsed = true;
+      }
+    }
+
+    // Final validation and cleaning
+    if (parsed && contractName && address && isValidAddress(address)) {
+      // Clean contract name
+      contractName = contractName
+        .replace(/^[,:\s=]+|[,:\s=]+$/g, "") // Remove leading/trailing separators
+        .replace(/[""'']/g, "") // Remove quotes
+        .trim();
+
+      // Ensure address is properly formatted
+      address = address.toLowerCase().startsWith("0x")
+        ? address
+        : `0x${address}`;
+
+      if (contractName && isValidAddress(address)) {
+        addresses[contractName] = address;
+      }
     }
   }
 
@@ -138,14 +248,76 @@ function removeUndefinedValues(obj: any): any {
   return cleaned;
 }
 
+/* ---------------- Helper Functions ---------------- */
+
+/**
+ * Sanitize project name for use in Git branch names
+ * - Convert to lowercase
+ * - Replace spaces and special characters with hyphens
+ * - Remove consecutive hyphens
+ * - Trim hyphens from start/end
+ */
+function sanitizeProjectName(projectName: string): string {
+  if (!projectName) {
+    return "unknown-project";
+  }
+
+  return projectName
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "-") // Replace non-alphanumeric with hyphens
+    .replace(/-+/g, "-") // Replace consecutive hyphens with single hyphen
+    .replace(/^-+|-+$/g, ""); // Remove leading/trailing hyphens
+}
+
+/**
+ * Check if a branch already exists
+ */
+async function branchExists(branchName: string): Promise<boolean> {
+  const { owner, repo } = GITHUB_CONFIG;
+
+  try {
+    await octokit.rest.git.getRef({
+      owner: owner!,
+      repo: repo!,
+      ref: `heads/${branchName}`,
+    });
+    return true;
+  } catch (error: any) {
+    if (error.status === 404) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Generate a unique branch name based on project name
+ */
+async function generateUniqueBranchName(projectName: string): Promise<string> {
+  const sanitizedName = sanitizeProjectName(projectName);
+  let branchName = `auto-update-${sanitizedName}`;
+
+  // Check if branch exists, if so, add timestamp to make it unique
+  if (await branchExists(branchName)) {
+    branchName = `auto-update-${sanitizedName}-${Date.now()}`;
+  }
+
+  return branchName;
+}
+
 /* ---------------- PR Creation Functions ---------------- */
 
 async function createPRWithChanges(formattedData: any): Promise<string> {
   const { owner, repo, targetFile, baseBranch } = GITHUB_CONFIG;
-  const branchName = `auto-update-${Date.now()}`;
+
+  // Generate branch name based on project name
+  const branchName = await generateUniqueBranchName(formattedData.name);
 
   try {
-    console.log("Creating PR with formatted data...");
+    console.log(
+      `Creating PR with formatted data for project: ${formattedData.name}`,
+    );
+    console.log(`Using branch name: ${branchName}`);
 
     // 1. Get the base branch reference
     const { data: baseRef } = await octokit.rest.git.getRef({
@@ -192,7 +364,7 @@ async function createPRWithChanges(formattedData: any): Promise<string> {
       owner,
       repo,
       path: targetFile,
-      message: `Auto-update: Monday.com data formatting (${new Date().toISOString()})`,
+      message: `Auto-update: Add ${formattedData.name} project data (${new Date().toISOString()})`,
       content: encodedContent,
       branch: branchName,
     };
@@ -209,7 +381,7 @@ async function createPRWithChanges(formattedData: any): Promise<string> {
     const { data: pr } = await octokit.rest.pulls.create({
       owner: owner!,
       repo: repo!,
-      title: `Auto-update: Monday.com webhook data`,
+      title: `Auto-update: Add ${formattedData.name} project`,
       head: branchName,
       base: baseBranch,
       body: generatePRDescription(formattedData, targetFile),
